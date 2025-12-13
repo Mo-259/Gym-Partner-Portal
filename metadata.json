@@ -1,0 +1,5 @@
+{
+  "name": "Gym Partner Portal",
+  "description": "A dedicated dashboard for gym owners and managers to oversee operations, schedule classes, manage passes, and track revenue.",
+  "requestFramePermissions": []
+}
