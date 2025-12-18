@@ -5,11 +5,15 @@ import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { Plus, Clock, Users, Calendar, Edit2, Trash2 } from 'lucide-react';
 import { useClassSchedule } from '../hooks/useGymData';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { ClassScheduleItem } from '../types/gym';
 
 const Schedule: React.FC = () => {
   const { data: initialSchedule, loading } = useClassSchedule();
+  const { user } = useAuth();
   const [scheduleItems, setScheduleItems] = useState<ClassScheduleItem[]>([]);
+  const [saving, setSaving] = useState(false);
   
   // Date Filter State
   const [selectedDateFilter, setSelectedDateFilter] = useState<'today' | 'tomorrow' | 'week'>('today');
@@ -28,7 +32,58 @@ const Schedule: React.FC = () => {
     status: 'active' as 'active' | 'cancelled'
   });
 
-  // Sync mock data
+  // Get gym_id
+  const [gymId, setGymId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchGymId = async () => {
+      if (!user) {
+        setGymId(null);
+        return;
+      }
+
+      try {
+        // Verify session is still valid
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          console.warn('Session expired, cannot fetch gym ID');
+          setGymId(null);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('gyms')
+          .select('id')
+          .eq('owner_id', user.id)
+          .maybeSingle();
+        
+        if (error) {
+          if (error.code === 'PGRST116' || error.code === '406') {
+            // No gym found - this is okay for new users
+            console.log('No gym found for user:', user.id);
+            setGymId(null);
+          } else {
+            console.error('Error fetching gym ID:', error.message, error);
+            setGymId(null);
+          }
+          return;
+        }
+
+        if (data) {
+          setGymId(data.id);
+        } else {
+          setGymId(null);
+        }
+      } catch (err: any) {
+        console.error('Unexpected error fetching gym ID:', err);
+        setGymId(null);
+      }
+    };
+
+    fetchGymId();
+  }, [user]);
+
+  // Sync data
   useEffect(() => {
     if (initialSchedule) {
       setScheduleItems(initialSchedule);
@@ -85,43 +140,109 @@ const Schedule: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
-    const dateBase = new Date();
-    if (selectedDateFilter === 'tomorrow') {
-        dateBase.setDate(dateBase.getDate() + 1);
+  const handleSave = async () => {
+    if (!gymId) {
+      alert('Gym not found. Please refresh the page.');
+      return;
     }
-    // Set time from form
-    const [h, m] = formData.hour.split(':');
-    dateBase.setHours(parseInt(h), parseInt(m), 0, 0);
 
-    if (editingItem) {
-      // Update
-      setScheduleItems(prev => prev.map(item => 
-        item.id === editingItem.id ? {
-          ...item,
-          name: formData.name,
-          instructorName: formData.instructorName,
-          dateTime: dateBase,
-          durationMinutes: formData.duration,
-          capacity: formData.capacity,
-          status: formData.status
-        } : item
-      ));
-    } else {
-      // Create
-      const newItem: ClassScheduleItem = {
-        id: `new_${Date.now()}`,
-        name: formData.name,
-        instructorName: formData.instructorName,
-        dateTime: dateBase,
-        durationMinutes: formData.duration,
-        capacity: formData.capacity,
-        bookedCount: 0,
-        status: formData.status
-      };
-      setScheduleItems(prev => [...prev, newItem]);
+    setSaving(true);
+    try {
+      const dateBase = new Date();
+      if (selectedDateFilter === 'tomorrow') {
+        dateBase.setDate(dateBase.getDate() + 1);
+      }
+      // Set time from form
+      const [h, m] = formData.hour.split(':');
+      dateBase.setHours(parseInt(h), parseInt(m), 0, 0);
+
+      if (editingItem) {
+        // Update
+        const { error } = await supabase
+          .from('classes')
+          .update({
+            name: formData.name,
+            instructor_name: formData.instructorName,
+            date_time: dateBase.toISOString(),
+            duration_minutes: formData.duration,
+            capacity: formData.capacity,
+            status: formData.status,
+          })
+          .eq('id', editingItem.id);
+
+        if (error) throw error;
+
+        // Update local state
+        setScheduleItems(prev => prev.map(item => 
+          item.id === editingItem.id ? {
+            ...item,
+            name: formData.name,
+            instructorName: formData.instructorName,
+            dateTime: dateBase,
+            durationMinutes: formData.duration,
+            capacity: formData.capacity,
+            status: formData.status
+          } : item
+        ));
+      } else {
+        // Create
+        const { data, error } = await supabase
+          .from('classes')
+          .insert({
+            gym_id: gymId,
+            name: formData.name,
+            instructor_name: formData.instructorName,
+            date_time: dateBase.toISOString(),
+            duration_minutes: formData.duration,
+            capacity: formData.capacity,
+            status: formData.status,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        // Add to local state
+        const newItem: ClassScheduleItem = {
+          id: data.id,
+          name: data.name,
+          instructorName: data.instructor_name,
+          dateTime: new Date(data.date_time),
+          durationMinutes: data.duration_minutes,
+          capacity: data.capacity,
+          bookedCount: 0,
+          status: data.status
+        };
+        setScheduleItems(prev => [...prev, newItem]);
+      }
+      setIsModalOpen(false);
+    } catch (error: any) {
+      console.error('Error saving class:', error);
+      alert(error.message || 'Failed to save class. Please try again.');
+    } finally {
+      setSaving(false);
     }
-    setIsModalOpen(false);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this class?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('classes')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Update local state
+      setScheduleItems(prev => prev.filter(item => item.id !== id));
+    } catch (error: any) {
+      console.error('Error deleting class:', error);
+      alert(error.message || 'Failed to delete class. Please try again.');
+    }
   };
 
   return (
@@ -216,6 +337,12 @@ const Schedule: React.FC = () => {
                 >
                     <Edit2 size={12} /> Edit
                 </button>
+                <button 
+                  onClick={() => handleDelete(item.id)}
+                  className="flex items-center gap-1 text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2 py-1.5 rounded"
+                >
+                    <Trash2 size={12} /> Delete
+                </button>
             </div>
           </Card>
         ))}
@@ -242,8 +369,12 @@ const Schedule: React.FC = () => {
         footer={
           <>
             <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-white text-sm font-medium px-4">Cancel</button>
-            <button onClick={handleSave} className="bg-[#005CFF] hover:bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-              {editingItem ? 'Save Changes' : 'Create Class'}
+            <button 
+              onClick={handleSave} 
+              disabled={saving}
+              className="bg-[#005CFF] hover:bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Saving...' : editingItem ? 'Save Changes' : 'Create Class'}
             </button>
           </>
         }

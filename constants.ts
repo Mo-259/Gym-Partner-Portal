@@ -6,7 +6,8 @@ import {
   Package, 
   Wallet, 
   Users, 
-  Settings 
+  Settings,
+  Building2
 } from 'lucide-react';
 import { NavItem, UserProfile } from './types';
 
@@ -18,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Bundles', path: '/bundles', icon: Package },
   { label: 'Payouts', path: '/payouts', icon: Wallet },
   { label: 'Staff', path: '/staff', icon: Users },
+  { label: 'Add Gym', path: '/add-gym', icon: Building2 },
   { label: 'Settings', path: '/settings', icon: Settings },
 ];
 

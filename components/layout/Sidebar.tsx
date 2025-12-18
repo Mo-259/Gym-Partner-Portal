@@ -1,29 +1,37 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { NAV_ITEMS, CURRENT_USER } from '../../constants';
+import { useAuth } from '../../contexts/AuthContext';
+import { NAV_ITEMS } from '../../constants';
 import { Dumbbell, LogOut } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
-  // Simple RBAC Logic
-  const role = CURRENT_USER.role; // 'Owner' | 'Manager' | 'Staff' (mapped from Front Desk/Trainer concept)
+  const { profile, signOut } = useAuth();
 
+  // Filter navigation items based on user role
   const allowedRoutes = NAV_ITEMS.filter(item => {
-    // Owner & Manager see everything
-    if (role === 'Owner' || role === 'Manager') return true;
+    if (!profile) return false;
 
-    // Staff (e.g. Front Desk / Trainer) restrictions
-    const restrictedForStaff = ['/payouts', '/staff', '/bundles'];
-    
-    // If role is 'Staff', hide restricted items
-    if (role === 'Staff' && restrictedForStaff.includes(item.path)) {
-      return false;
+    // Admins and super_admins see everything including Add Gym
+    if (profile.role === 'admin' || profile.role === 'super_admin') {
+      return true;
+    }
+
+    // Gym owners see everything except Add Gym (they should use it only if they don't have a gym, via redirect)
+    if (profile.role === 'gym_owner') {
+      // Hide Add Gym from menu for gym_owners who already have a gym
+      // They'll be redirected to it if they don't have a gym
+      return item.path !== '/add-gym';
     }
     
-    return true;
+    return false;
   });
 
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
-    <aside className="w-64 h-full bg-[#0A0A0A] border-r border-white/10 flex flex-col hidden md:flex flex-shrink-0">
+    <aside className="hidden md:flex md:flex-col w-64 h-full bg-[#0A0A0A] border-r border-white/10 flex-shrink-0">
       {/* Brand Logo Area */}
       <div className="h-16 flex items-center px-6 border-b border-white/10">
         <div className="flex items-center gap-3">
@@ -56,7 +64,10 @@ export const Sidebar: React.FC = () => {
 
       {/* Footer / Version info */}
       <div className="p-6 border-t border-white/10">
-        <button className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors mb-4 w-full">
+        <button 
+          onClick={handleSignOut}
+          className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors mb-4 w-full"
+        >
            <LogOut size={14} />
            <span>Sign Out</span>
         </button>

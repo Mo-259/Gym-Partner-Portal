@@ -1,12 +1,41 @@
-import React from 'react';
-import { Bell, Search, Menu } from 'lucide-react';
-import { CURRENT_USER } from '../../constants';
+import React, { useState, useEffect } from 'react';
+import { Bell, Search, Menu, LogOut } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 interface TopBarProps {
   onMenuClick: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
+  const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [gymName, setGymName] = useState<string>('Gym');
+
+  useEffect(() => {
+    const fetchGymName = async () => {
+      if (profile?.id) {
+        const { data } = await supabase
+          .from('gyms')
+          .select('name')
+          .eq('owner_id', profile.id)
+          .single();
+        
+        if (data) {
+          setGymName(data.name);
+        }
+      }
+    };
+
+    fetchGymName();
+  }, [profile]);
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/signin');
+  };
+
   return (
     <header className="h-16 bg-[#0A0A0A] border-b border-white/10 flex items-center justify-between px-4 md:px-8 sticky top-0 z-20">
       <div className="flex items-center gap-4">
@@ -44,16 +73,19 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
         {/* User Profile */}
         <div className="flex items-center gap-3 pl-6 border-l border-white/10">
           <div className="text-right hidden md:block">
-            <p className="text-sm font-semibold text-white leading-none">{CURRENT_USER.gymName}</p>
-            <p className="text-xs text-gray-500 mt-1">{CURRENT_USER.name}</p>
+            <p className="text-sm font-semibold text-white leading-none">{gymName}</p>
+            <p className="text-xs text-gray-500 mt-1">{profile?.full_name || profile?.email || 'Gym Owner'}</p>
           </div>
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#005CFF] to-blue-800 p-[1px]">
-             <img 
-               src={CURRENT_USER.avatarUrl} 
-               alt="Profile" 
-               className="w-full h-full rounded-full object-cover border-2 border-[#0A0A0A]" 
-             />
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#005CFF] to-blue-800 flex items-center justify-center text-white font-bold text-sm">
+            {(profile?.full_name || profile?.email || 'G').charAt(0).toUpperCase()}
           </div>
+          <button
+            onClick={handleSignOut}
+            className="p-2 text-gray-400 hover:text-white transition-colors"
+            title="Sign Out"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </div>
     </header>

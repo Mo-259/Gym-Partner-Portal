@@ -3,6 +3,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { useTodaySessions } from '../hooks/useGymData';
+import { supabase } from '../lib/supabase';
 import { Search, CheckCircle, XCircle, Filter } from 'lucide-react';
 import { TodaySession } from '../types/gym';
 
@@ -16,7 +17,7 @@ const Today: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [scanCode, setScanCode] = useState<string>('');
 
-  // Sync mock data to local state once loaded
+  // Sync data to local state once loaded
   useEffect(() => {
     if (initialSessions) {
       setSessions(initialSessions);
@@ -24,20 +25,79 @@ const Today: React.FC = () => {
   }, [initialSessions]);
 
   // Actions
-  const handleCheckIn = (id: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === id ? { ...s, bookingStatus: 'checked_in' } : s
-    ));
-    setScanCode(''); // Clear scan after action
+  const handleCheckIn = async (id: string) => {
+    try {
+      // Verify session is still valid
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Session expired. Please sign in again.');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'checked_in' })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error checking in:', error.message, error);
+        if (error.code === 'PGRST301' || error.message?.includes('JWT')) {
+          alert('Authentication error. Please sign in again.');
+        } else {
+          alert(`Failed to check in: ${error.message}`);
+        }
+        return;
+      }
+
+      // Update local state
+      setSessions(prev => prev.map(s => 
+        s.id === id ? { ...s, bookingStatus: 'checked_in' } : s
+      ));
+      setScanCode(''); // Clear scan after action
+      
+      // Refresh data
+      window.location.reload(); // Simple refresh - could be improved with refetch
+    } catch (error: any) {
+      console.error('Unexpected error checking in:', error);
+      alert('Failed to check in. Please try again.');
+    }
   };
 
-  const handleNoShow = (id: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === id ? { ...s, bookingStatus: 'no_show' } : s
-    ));
+  const handleNoShow = async (id: string) => {
+    try {
+      // Verify session is still valid
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Session expired. Please sign in again.');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({ status: 'no_show' })
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error marking no-show:', error.message, error);
+        if (error.code === 'PGRST301' || error.message?.includes('JWT')) {
+          alert('Authentication error. Please sign in again.');
+        } else {
+          alert(`Failed to mark as no-show: ${error.message}`);
+        }
+        return;
+      }
+
+      // Update local state
+      setSessions(prev => prev.map(s => 
+        s.id === id ? { ...s, bookingStatus: 'no_show' } : s
+      ));
+    } catch (error: any) {
+      console.error('Unexpected error marking no-show:', error);
+      alert('Failed to mark as no-show. Please try again.');
+    }
   };
 
-  const handleScanSubmit = (e: React.FormEvent) => {
+  const handleScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scanCode.trim()) return;
     
@@ -45,13 +105,57 @@ const Today: React.FC = () => {
     const match = sessions.find(s => s.checkInCode.toLowerCase() === scanCode.toLowerCase());
     if (match) {
         if (match.bookingStatus === 'booked') {
-            handleCheckIn(match.id);
+            await handleCheckIn(match.id);
             alert(`Checked in ${match.userName} successfully!`);
         } else {
             alert(`Member ${match.userName} is already ${match.bookingStatus.replace('_', ' ')}.`);
         }
     } else {
-        alert("Invalid check-in code.");
+        // Try to find by booking ID in database
+        try {
+          // Verify session is still valid
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            alert('Session expired. Please sign in again.');
+            return;
+          }
+
+          const { data, error } = await supabase
+            .from('bookings')
+            .select(`
+              *,
+              profiles:user_id (
+                id,
+                full_name,
+                email
+              )
+            `)
+            .or(`id.eq.${scanCode},check_in_code.eq.${scanCode}`)
+            .eq('status', 'booked')
+            .maybeSingle();
+
+          if (error) {
+            if (error.code === 'PGRST116' || error.code === '406') {
+              // No booking found with that code
+              alert("Invalid check-in code.");
+            } else {
+              console.error('Error fetching booking:', error.message, error);
+              alert("Failed to verify check-in code. Please try again.");
+            }
+            return;
+          }
+
+          if (data) {
+            await handleCheckIn(data.id);
+            const userName = data.profiles?.full_name || data.profiles?.email || 'Member';
+            alert(`Checked in ${userName} successfully!`);
+          } else {
+            alert("Invalid check-in code.");
+          }
+        } catch (err: any) {
+          console.error('Unexpected error scanning code:', err);
+          alert("Invalid check-in code.");
+        }
     }
   };
 
